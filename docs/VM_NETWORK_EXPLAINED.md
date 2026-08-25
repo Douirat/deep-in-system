@@ -22,6 +22,58 @@ This document explains the output of `ip a` run inside the VirtualBox guest, and
        valid_lft forever preferred_lft forever
 ```
 
+## The host's side: `ip a` on your ThinkPad
+
+This is the crucial piece the guest output alone doesn't show. Running `ip a` on your **host machine** (bendoe-ThinkPad-T590) gives:
+
+```
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host noprefixroute
+       valid_lft forever preferred_lft forever
+2: enp0s31f6: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc fq_codel state DOWN group default qlen 1000
+    link/ether 00:2b:67:20:9c:90 brd ff:ff:ff:ff:ff:ff
+3: wlp0s20f3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+    link/ether 74:d8:3e:b0:6a:17 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.1.111/24 brd 192.168.1.255 scope global dynamic noprefixroute wlp0s20f3
+       valid_lft 82796sec preferred_lft 82796sec
+    inet6 fe80::8460:c6f2:531c:b610/64 scope link noprefixroute
+       valid_lft forever preferred_lft forever
+4: wwan0: <BROADCAST,MULTICAST,NOARP> mtu 1500 qdisc noop state DOWN group default qlen 1000
+    link/ether 46:c7:11:76:27:d0 brd ff:ff:ff:ff:ff:ff
+5: br-2d9ecff5397a: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN group default
+    link/ether 9a:81:f4:78:1a:63 brd ff:ff:ff:ff:ff:ff
+    inet 172.18.0.1/16 brd 172.18.255.255 scope global br-2d9ecff5397a
+       valid_lft forever preferred_lft forever
+6: docker0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN group default
+    link/ether 4a:d7:b6:0b:6a:8a brd ff:ff:ff:ff:ff:ff
+    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+       valid_lft forever preferred_lft forever
+```
+
+### Reading the host's interfaces
+
+| Interface | State | What it is |
+|---|---|---|
+| `lo` | — | Same loopback story as the guest, irrelevant to VM reachability. |
+| `enp0s31f6` | `NO-CARRIER` / `DOWN` | The ThinkPad's built-in Ethernet port. Physically up (cable unplugged or no link), no IP assigned. Not in use. |
+| `wlp0s20f3` | `UP`, has an IP | **This is the host's real, active connection** — Wi-Fi, address `192.168.1.111/24`. This is the subnet your host actually lives on. |
+| `wwan0` | `DOWN` | A mobile broadband/WWAN modem interface, unused. |
+| `br-2d9ecff5397a`, `docker0` | `DOWN`, but with IPs `172.18.0.1/16` and `172.17.0.1/16` | Docker's virtual bridge networks, created automatically by the Docker daemon for container-to-container and container-to-host networking. Unrelated to the VM entirely — these exist because Docker is installed on this host, not because of VirtualBox. |
+
+### Why this is the piece that makes NAT vs. Bridged click
+
+Now the comparison from the earlier section has concrete numbers behind it:
+
+- **Guest (VM), NAT mode:** `10.0.2.15/24` — VirtualBox's private, internal-only NAT segment.
+- **Host, real network:** `192.168.1.111/24` — the actual LAN, reachable by other devices on your Wi-Fi (router, phone, etc.).
+
+These are two *completely different, non-routing subnets*. That's the whole reason `ssh luffy@10.0.2.15` from the host fails outright (`10.0.2.0/24` doesn't exist as far as the host's routing table is concerned — it's a network that only exists *inside* VirtualBox's NAT engine).
+
+If you switch the VM to **Bridged mode** (Option B below), the guest's `enp0s3` would instead pick up an address in the **same `192.168.1.0/24` block as `wlp0s20f3`** — e.g. `192.168.1.150` — because it would be attached directly to your Wi-Fi's network segment via your host's wireless adapter, rather than to VirtualBox's isolated NAT network. At that point the guest and host are just two ordinary machines on the same LAN, and plain `ssh -p 2222 luffy@192.168.1.150` works with no forwarding rule at all.
+
 ## Interface 1: `lo` (loopback)
 
 - `127.0.0.1/8` and `::1/128` are the IPv4/IPv6 loopback addresses.
