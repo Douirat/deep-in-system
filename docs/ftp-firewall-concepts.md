@@ -1,117 +1,117 @@
-# Comprendre les règles UFW pour FTP (Control + Passive Mode)
+# Understanding the UFW Rules for FTP (Control + Passive Mode)
 
 ```bash
 sudo ufw allow 20:21/tcp       # FTP control
 sudo ufw allow 40000:50000/tcp # FTP passive range (must match vsftpd config)
 ```
 
-Ce document explique **tous les concepts théoriques** nécessaires pour comprendre pourquoi ces deux règles existent et comment elles fonctionnent ensemble.
+This document explains **all the theoretical concepts** you need to understand why these two rules exist and how they work together.
 
 ---
 
-## 1. Le protocole FTP utilise DEUX canaux
+## 1. FTP uses TWO channels
 
-Contrairement à HTTP (un seul port, 80/443), FTP sépare la communication en deux connexions distinctes :
+Unlike HTTP (a single port, 80/443), FTP splits communication into two separate connections:
 
-| Canal | Rôle | Port par défaut |
+| Channel | Role | Default port |
 |---|---|---|
-| **Control channel** (commandes) | Envoie les commandes (`USER`, `PASS`, `LIST`, `RETR`, `STOR`...) et reçoit les réponses du serveur | **21** |
-| **Data channel** (données) | Transfère réellement les fichiers et les listings de dossiers | Dynamique (négocié) |
+| **Control channel** (commands) | Sends commands (`USER`, `PASS`, `LIST`, `RETR`, `STOR`...) and receives server responses | **21** |
+| **Data channel** (data) | Actually transfers files and directory listings | Dynamic (negotiated) |
 
-Le port 20 est historiquement associé au canal de données en mode **actif** (voir plus bas), ce qui explique la plage `20:21` dans la première règle.
-
----
-
-## 2. Mode actif vs mode passif
-
-C'est le concept le plus important à maîtriser.
-
-### Mode actif (FTP Active)
-- Le **client** ouvre le canal de contrôle vers le port 21 du serveur.
-- Pour le transfert de données, c'est le **serveur** qui initie une connexion *vers* le client (depuis son port 20).
-- Problème : si le client est derrière un NAT/firewall (quasi toujours le cas aujourd'hui), le serveur ne peut pas initier de connexion entrante vers lui → **échec du transfert**.
-
-### Mode passif (FTP Passive) — celui utilisé ici
-- Le client ouvre le canal de contrôle vers le port 21.
-- Le client demande ensuite au serveur : *"donne-moi un port pour les données"* (commande `PASV`).
-- Le serveur répond avec un port aléatoire choisi dans une **plage prédéfinie**.
-- Le client initie **lui-même** la connexion de données vers ce port.
-- Avantage : fonctionne bien mieux avec les NAT/firewalls modernes, car c'est toujours le client qui initie les connexions.
-
-C'est pourquoi la configuration passive est aujourd'hui la norme, et pourquoi il faut ouvrir une **plage de ports** côté serveur (`40000:50000` dans l'exemple).
+Port 20 is historically associated with the data channel in **active mode** (see below), which is why the first rule uses the range `20:21`.
 
 ---
 
-## 3. Pourquoi une plage de ports (`40000:50000`) et pas un seul port ?
+## 2. Active mode vs Passive mode
 
-- Chaque connexion de données passive a besoin de **son propre port**, choisi aléatoirement par le serveur dans la plage configurée.
-- Si plusieurs clients se connectent en même temps (ou si un même client fait plusieurs transferts), chacun utilise un port différent de la plage.
-- Cette plage est définie côté serveur FTP (ex: `vsftpd`) via des paramètres comme :
+This is the most important concept to understand here.
+
+### Active mode (FTP Active)
+- The **client** opens the control channel to the server's port 21.
+- For data transfer, the **server** initiates a connection *back to* the client (from its own port 20).
+- Problem: if the client is behind NAT/a firewall (basically always true today), the server can't initiate an inbound connection to it -> **transfer fails**.
+
+### Passive mode (FTP Passive) -- the one used here
+- The client opens the control channel to port 21.
+- The client then asks the server: *"give me a port for data"* (the `PASV` command).
+- The server replies with a random port chosen from a **predefined range**.
+- The client itself initiates the data connection to that port.
+- Advantage: works much better with modern NAT/firewalls, because it's always the client initiating connections.
+
+This is why passive mode is the standard today, and why the server side needs a **port range** opened (`40000:50000` in the example).
+
+---
+
+## 3. Why a port range (`40000:50000`) instead of a single port?
+
+- Each passive data connection needs **its own port**, randomly picked by the server from the configured range.
+- If multiple clients connect at once (or the same client does several transfers), each uses a different port from the range.
+- This range is set on the FTP server side (e.g. `vsftpd`) via parameters like:
   ```
   pasv_min_port=40000
   pasv_max_port=50000
   ```
-- **Le firewall (ufw) doit autoriser exactement la même plage**, sinon le serveur choisira un port pour la connexion de données que le firewall bloquera → transfert qui "se bloque" après l'authentification (symptôme classique : on peut se connecter et voir `login successful`, mais `LIST` ou le transfert de fichier reste bloqué).
+- **The firewall (ufw) must allow the exact same range**, otherwise the server may pick a data port the firewall blocks -> the transfer "hangs" right after authentication (classic symptom: you can log in and see `login successful`, but `LIST` or a file transfer just stalls).
 
 ---
 
-## 4. UFW (Uncomplicated Firewall) — les bases nécessaires
+## 4. UFW (Uncomplicated Firewall) -- the basics you need
 
-- UFW est une surcouche simplifiée d'`iptables` sous Linux (Ubuntu/Debian).
-- `sudo ufw allow PORT/tcp` ajoute une règle autorisant le trafic **entrant** sur ce port en TCP.
-- La syntaxe `20:21/tcp` signifie *"autoriser tous les ports de 20 à 21 inclus, en TCP"*.
-- FTP fonctionne exclusivement en TCP (jamais UDP), d'où le suffixe `/tcp`.
-- Sans ces règles explicites, UFW bloque par défaut tout trafic entrant non autorisé — donc même si `vsftpd` tourne correctement, les connexions échoueront tant que le firewall ne laisse pas passer les bons ports.
+- UFW is a simplified frontend for `iptables` on Linux (Ubuntu/Debian).
+- `sudo ufw allow PORT/tcp` adds a rule allowing **inbound** traffic on that port over TCP.
+- The syntax `20:21/tcp` means *"allow all ports from 20 to 21 inclusive, over TCP"*.
+- FTP runs exclusively over TCP (never UDP), hence the `/tcp` suffix.
+- Without these explicit rules, UFW blocks all unrecognized inbound traffic by default -- so even if `vsftpd` is running fine, connections will fail until the firewall lets the right ports through.
 
 ---
 
-## 5. Le lien entre firewall et configuration du serveur FTP
+## 5. The link between the firewall and the FTP server config
 
-C'est le point critique mentionné dans le commentaire du code : **"must match vsftpd config"**.
+This is the critical point behind the comment in the code: **"must match vsftpd config"**.
 
-Il y a une chaîne de cohérence à respecter :
+There's a chain of consistency to maintain:
 
 ```
-Configuration vsftpd (pasv_min_port / pasv_max_port)
-              ⇅  (doivent être identiques)
-Règle UFW (plage de ports autorisée)
+vsftpd config (pasv_min_port / pasv_max_port)
+              <->  (must be identical)
+UFW rule (allowed port range)
 ```
 
-Si ces deux valeurs ne correspondent pas :
-- Le serveur peut choisir un port passif que le firewall bloque.
-- Résultat : le client se connecte, s'authentifie, mais les transferts de fichiers échouent ou "timeout".
+If these two don't match:
+- The server might pick a passive port the firewall blocks.
+- Result: the client connects and authenticates fine, but file transfers fail or time out.
 
 ---
 
-## 6. Concepts complémentaires utiles
+## 6. Related concepts worth knowing
 
-- **NAT (Network Address Translation)** : traduction d'adresses IP privées/publiques, source du problème que le mode passif résout.
-- **TCP vs UDP** : FTP est basé sur TCP car il nécessite une transmission fiable et ordonnée (contrairement à UDP).
-- **FTPS / SFTP** : alternatives sécurisées à FTP (FTPS = FTP + TLS ; SFTP = protocole différent basé sur SSH). Utile de connaître la différence si la sécurité du transfert est une préoccupation.
-- **Ports privilégiés (<1024)** : le port 21 fait partie des ports réservés nécessitant des droits root pour être utilisés par un service, d'où l'usage de `sudo`.
+- **NAT (Network Address Translation)**: translation between private/public IP addresses -- the root problem passive mode solves.
+- **TCP vs UDP**: FTP is TCP-based because it needs reliable, ordered transmission (unlike UDP).
+- **FTPS / SFTP**: secure alternatives to plain FTP (FTPS = FTP + TLS; SFTP = a different protocol built on SSH). Worth knowing the difference if transfer security matters.
+- **Privileged ports (<1024)**: port 21 is a reserved port requiring root privileges to bind, which is why `sudo` is needed.
 
 ---
 
-## 7. Résumé visuel du flux passif complet
+## 7. Visual summary of the full passive flow
 
 ```
-Client                                Serveur FTP
-  |--- connexion TCP port 21 -------->|   (control channel)
+Client                                FTP Server
+  |--- TCP connection to port 21 ---->|   (control channel)
   |<-- "220 Service ready" -----------|
   |--- USER / PASS ------------------>|
-  |--- commande PASV ----------------->|
+  |--- PASV command ------------------>|
   |<-- "227 Entering Passive Mode      |
-  |     (ip, port choisi dans 40000-50000)"
-  |--- nouvelle connexion TCP vers    |
-  |    le port indiqué --------------->|   (data channel)
-  |<-- transfert de fichier/listing ---|
+  |     (ip, port picked from 40000-50000)"
+  |--- new TCP connection to the      |
+  |    given port -------------------->|   (data channel)
+  |<-- file transfer / listing --------|
 ```
 
 ---
 
-## À retenir
+## Key takeaways
 
-1. FTP = 2 canaux (contrôle + données), pas un seul comme HTTP.
-2. Le mode passif est préféré aujourd'hui car compatible NAT/firewall côté client.
-3. La plage de ports passifs doit être **identique** entre `vsftpd` et `ufw`.
-4. Sans règle UFW correspondante, le transfert de données échoue même si l'authentification réussit.
+1. FTP = 2 channels (control + data), unlike a single-port protocol like HTTP.
+2. Passive mode is preferred today because it's NAT/firewall-friendly on the client side.
+3. The passive port range must be **identical** between `vsftpd` and `ufw`.
+4. Without a matching UFW rule, data transfer fails even if authentication succeeds.
