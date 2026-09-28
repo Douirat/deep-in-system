@@ -1,423 +1,221 @@
-# MySQL on Ubuntu Server
+# MySQL Server Security and WordPress Database Setup
 
-## 1. Goal
+## 1. Installing MySQL
 
-The goal is to install a MySQL server on the Ubuntu Server VM and configure it for a later WordPress installation.
-
-The intended architecture is:
-
-```text
-Ubuntu Server VM
-│
-├── WordPress
-│      │
-│      │ localhost
-│      ▼
-│   MySQL Server
-│      │
-│      ▼
-│   wordpress database
-│      │
-│      ├── wp_users
-│      ├── wp_posts
-│      ├── wp_comments
-│      └── ...
-│
-└── MySQL listens locally
-    127.0.0.1:3306
-```
-
-The main security idea is:
-
-> Keep MySQL local when remote database access is not required, and give WordPress its own database account with access limited to its own database.
-
----
-
-# 2. Install MySQL Server
-
-From the normal Ubuntu shell:
+Install the MySQL server:
 
 ```bash
 sudo apt install mysql-server
 ```
 
-### What this does
-
-Installs the MySQL server software on the VM.
-
-`sudo` is required because installing system software modifies protected system directories.
-
-MySQL is a **database server**. Applications communicate with it using SQL.
-
-For example:
-
-```text
-Application
-    │
-    │ SQL query
-    ▼
-MySQL Server
-    │
-    ▼
-Database
-    │
-    ▼
-Tables
-```
-
----
-
-# 3. Run MySQL security configuration
-
-After installation:
+After installation, run the security configuration:
 
 ```bash
 sudo mysql_secure_installation
 ```
 
-This is a hardening script that can help configure basic MySQL security.
-
-Depending on the MySQL version and configuration, it can address things such as:
-
-* anonymous users
-* remote root access
-* test databases
-* authentication configuration
-* privilege reloading
-
-It is a **security configuration tool**, not the MySQL server itself.
+This removes or disables unnecessary/default MySQL features that can create security risks.
 
 ---
 
-# 4. MySQL network binding
+# 2. `mysql_secure_installation`
 
-MySQL normally uses TCP port:
+Run:
+
+```bash
+sudo mysql_secure_installation
+```
+
+Recommended choices for a typical Ubuntu server:
+
+| Question                      | Recommendation | Reason                                      |
+| ----------------------------- | -------------- | ------------------------------------------- |
+| Validate password component?  | `Y`            | Enforces stronger passwords                 |
+| Password validation policy    | `2` / MEDIUM   | Good balance between security and usability |
+| Remove anonymous users?       | `Y`            | Anonymous accounts are unnecessary          |
+| Disallow root login remotely? | `Y`            | Prevents remote MySQL root authentication   |
+| Remove test database?         | `Y`            | Removes an unnecessary database             |
+| Reload privilege tables?      | `Y`            | Applies the changes immediately             |
+
+## Important: MySQL root authentication
+
+On Ubuntu installations, MySQL `root` may authenticate using the Unix socket rather than a MySQL password.
+
+You can test local root access with:
+
+```bash
+sudo mysql
+```
+
+If you see:
+
+```text
+mysql>
+```
+
+you successfully entered MySQL as root.
+
+You can leave MySQL with:
+
+```sql
+exit;
+```
+
+---
+
+# 3. MySQL Network Binding
+
+MySQL normally listens for TCP connections on port:
 
 ```text
 3306
 ```
 
-The configuration file discussed was:
+The configuration file is:
 
 ```text
 /etc/mysql/mysql.conf.d/mysqld.cnf
 ```
 
-with:
+To edit it:
+
+```bash
+sudo nano /etc/mysql/mysql.conf.d/mysqld.cnf
+```
+
+Set:
 
 ```ini
 bind-address = 127.0.0.1
 ```
 
-## What is `bind-address`?
+---
 
-It tells the MySQL server which local network address/interface it should listen on.
+# 4. What Does `127.0.0.1` Mean?
 
-`127.0.0.1` means **localhost**.
+`127.0.0.1` is the server's **loopback address**.
+
+It means:
+
+> This computer itself.
 
 So:
 
-```text
-127.0.0.1:3306
+```ini
+bind-address = 127.0.0.1
 ```
 
-means MySQL is listening on port `3306` through the local machine's loopback interface.
+tells MySQL:
+
+> Only accept network connections through the server's local loopback interface.
 
 Conceptually:
 
 ```text
-Same VM
-   │
-   │ 127.0.0.1
-   ▼
-MySQL :3306
+                 Ubuntu Server
+              ┌─────────────────┐
+              │                 │
+              │     MySQL       │
+              │      :3306      │
+              │        ▲        │
+              │        │        │
+              │   127.0.0.1     │
+              └────────┼────────┘
+                       │
+                Local programs
 ```
 
-Another machine trying to connect through the server's LAN address would not be able to use that MySQL listener if MySQL is bound only to `127.0.0.1`.
-
-## Important terminology
-
-Don't think:
-
-> "I bind an IP address to the server."
-
-More precisely:
-
-> You configure the MySQL server process to bind/listen on `127.0.0.1`.
-
----
-
-# 5. Why bind MySQL to localhost?
-
-If WordPress and MySQL are running on the same VM, WordPress does not need MySQL to accept connections from the network.
-
-Instead:
+For example:
 
 ```text
 WordPress
     │
-    │ local connection
+    │ 127.0.0.1:3306
     ▼
-127.0.0.1:3306
-    │
-    ▼
-MySQL
+  MySQL
 ```
 
-This reduces MySQL's network exposure.
-
-Without local-only binding, MySQL could potentially listen on another interface such as:
+But another computer cannot directly connect through the server's network interface:
 
 ```text
-192.168.1.6:3306
+Other computer
+      │
+      │ 192.168.1.33:3306
+      X
+    MySQL
 ```
 
-which would make network connections possible, subject to firewall and MySQL authentication rules.
+assuming MySQL is bound only to `127.0.0.1`.
 
 ---
 
-# 6. Linux users vs MySQL users
+# 5. Why Bind MySQL to Localhost?
 
-This is an important distinction.
-
-Linux has users such as:
-
-```text
-root
-server
-luffy
-zoro
-```
-
-These are **Linux accounts**.
-
-MySQL has its own accounts:
-
-```text
-root
-wp_user
-```
-
-These are **MySQL accounts**.
-
-They are managed by MySQL.
+If WordPress and MySQL are on the same server, WordPress does not need MySQL to be accessible from other computers.
 
 For example:
 
-```bash
-sudo mysql
-```
-
-is a Linux shell command used to start the MySQL client.
-
-Once inside MySQL:
-
 ```text
-mysql>
+Internet / LAN
+      │
+      X
+      │
+   MySQL :3306
+      │
+      │ localhost only
+      ▼
+WordPress
 ```
 
-you execute SQL commands.
+This reduces the number of ways an external machine can interact with MySQL.
+
+The principle is:
+
+> If a service does not need remote network access, don't expose it unnecessarily.
 
 ---
 
-# 7. Enter the MySQL client
+# 6. MySQL Users Are Username + Host
 
-From Bash:
+One of the most important MySQL concepts is that a MySQL account is not simply a username.
 
-```bash
-sudo mysql
-```
-
-The prompt changes from something like:
-
-```text
-server@server-host:~$
-```
-
-to:
-
-```text
-mysql>
-```
-
-This means you're now interacting with MySQL.
-
-You saw:
-
-```text
-Welcome to the MySQL monitor.
-```
-
-and:
-
-```text
-Server version: 8.4.11-0ubuntu0.26.04.1 (Ubuntu)
-```
-
-This confirmed that the MySQL server was installed and that you successfully connected to it.
-
-The:
-
-```text
-Your MySQL connection id is 8
-```
-
-is an identifier for your current MySQL connection/session.
-
-It is not your user ID or database ID.
-
----
-
-# 8. Bash commands vs SQL commands
-
-There are two different environments.
-
-## Ubuntu Bash
-
-Prompt:
-
-```text
-server@server-host:~$
-```
-
-Commands:
-
-```bash
-sudo mysql
-ls
-pwd
-systemctl status mysql
-```
-
-## MySQL client
-
-Prompt:
-
-```text
-mysql>
-```
-
-Commands:
-
-```sql
-CREATE USER ...;
-CREATE DATABASE ...;
-GRANT ...;
-SELECT ...;
-SHOW DATABASES;
-```
-
-Mental model:
-
-```text
-Ubuntu Bash
-server@server-host:~$
-        │
-        │ sudo mysql
-        ▼
-MySQL client
-mysql>
-        │
-        ├── CREATE USER
-        ├── CREATE DATABASE
-        ├── GRANT
-        └── SELECT
-```
-
----
-
-# 9. SQL statements need `;`
-
-You encountered this several times.
-
-You entered:
-
-```sql
-CREATE USER 'wp_user'@'localhost' IDENTIFIED BY 'wordpress'
-```
-
-without:
-
-```text
-;
-```
-
-MySQL changed the prompt to:
-
-```text
-->
-```
-
-The `->` means:
-
-> MySQL thinks the SQL statement is not finished yet.
-
-You can finish it by entering:
-
-```text
-;
-```
-
-or cancel the incomplete statement with:
-
-```text
-Ctrl + C
-```
-
-You did both correctly during the session.
-
-For example:
-
-```sql
-CREATE DATABASE wordpress;
-```
-
-The semicolon tells the MySQL client that the statement is complete.
-
----
-
-# 10. Create a MySQL user
-
-You successfully executed:
-
-```sql
-CREATE USER 'wp_user'@'localhost' IDENTIFIED BY 'wordpress';
-```
-
-This creates the MySQL account:
-
-```text
-wp_user@localhost
-```
-
-The account has two important components:
+It is effectively:
 
 ```text
 username + host
 ```
 
-Therefore:
+For example:
+
+```sql
+'wp_user'@'localhost'
+```
+
+has two components:
 
 ```text
+'wp_user'     '@'     'localhost'
+    │                    │
+    │                    └── Where the user may connect from
+    │
+    └─────────────────────── Username
+```
+
+Therefore:
+
+```sql
 'wp_user'@'localhost'
 ```
 
 means:
 
-```text
-username = wp_user
-host     = localhost
-```
-
-This is a MySQL account, not a Linux user.
+> The MySQL user `wp_user` can authenticate when connecting from the local machine.
 
 ---
 
-# 11. MySQL account hosts
+# 7. Different Hosts Create Different MySQL Accounts
 
-MySQL accounts can be associated with different hosts.
-
-For example:
+These are different MySQL accounts:
 
 ```text
 'wp_user'@'localhost'
@@ -425,420 +223,129 @@ For example:
 'wp_user'@'%'
 ```
 
-These can represent different MySQL accounts.
+Even though they all use:
 
-The important examples are:
+```text
+wp_user
+```
+
+as the username, their allowed connection sources are different.
+
+For example:
 
 ```text
 'wp_user'@'localhost'
 ```
 
-means the account is associated with local connections.
+means:
 
-And:
+```text
+Only the local server
+```
+
+while:
 
 ```text
 'wp_user'@'%'
 ```
 
-uses `%` as a wildcard for the host, meaning any host.
-
----
-
-# 12. Create the WordPress database
-
-The intended command is:
-
-```sql
-CREATE DATABASE wordpress;
-```
-
-A MySQL server can contain multiple databases:
-
-```text
-MySQL Server
-│
-├── wordpress
-├── school
-├── shop
-└── ...
-```
-
-A database contains tables.
-
-For example:
-
-```text
-wordpress
-│
-├── wp_users
-├── wp_posts
-├── wp_comments
-└── wp_options
-```
-
-WordPress will later use the `wordpress` database.
-
----
-
-# 13. Your typo
-
-You initially attempted:
-
-```sql
-CREATE DATABASE wordpress
-```
-
-but forgot the semicolon and cancelled the statement with:
-
-```text
-Ctrl + C
-```
-
-That did not create the database.
-
-Then you accidentally entered:
-
-```sql
-CREATE DATABASE wodpress;
-```
-
-Notice:
-
-```text
-wodpress
-```
-
-instead of:
-
-```text
-wordpress
-```
-
-So you created the wrong database name.
-
-Your state became:
-
-```text
-Database:
-wodpress
-```
-
-but your privilege command referred to:
-
-```text
-wordpress.*
-```
-
-These names do not match.
-
-To correct it:
-
-```sql
-DROP DATABASE wodpress;
-CREATE DATABASE wordpress;
-```
-
-Be careful with `DROP DATABASE`: it permanently deletes that database and its contents.
-
-Since `wodpress` was just accidentally created and empty in this exercise, removing it is appropriate.
-
----
-
-# 14. `GRANT`
-
-The command:
-
-```sql
-GRANT ALL PRIVILEGES
-ON wordpress.*
-TO 'wp_user'@'localhost';
-```
-
-means:
-
-> Give the MySQL account `wp_user` connecting from `localhost` broad privileges on everything inside the `wordpress` database.
-
-Break it into pieces:
-
-```text
-GRANT
-```
-
 means:
 
 ```text
-Give permissions
-```
-
-Then:
-
-```text
-ALL PRIVILEGES
-```
-
-means:
-
-```text
-Give broad/all available privileges
-```
-
-Then:
-
-```text
-ON wordpress.*
-```
-
-means:
-
-```text
-On everything inside the wordpress database
-```
-
-Finally:
-
-```text
-TO 'wp_user'@'localhost'
-```
-
-means:
-
-```text
-Give those permissions to wp_user@localhost
+Any host
 ```
 
 ---
 
-# 15. Understanding `wordpress.*`
+# 8. What Does `%` Mean?
 
-This is one of the most important parts.
-
-The general pattern is:
+In a MySQL host specification:
 
 ```text
-database.object
+%
 ```
 
-So:
+is a wildcard.
+
+It means approximately:
+
+> Any host.
+
+Therefore:
 
 ```text
-wordpress.*
+'root'@'%'
 ```
 
 means:
 
-```text
-database = wordpress
-object   = everything
-```
+> A MySQL `root` account that can authenticate from any host, subject to the server's other network and authentication controls.
 
-For example:
+This is why checking for:
 
 ```text
-wordpress.*
-    │
-    ├── wp_users
-    ├── wp_posts
-    ├── wp_comments
-    └── wp_options
+root@%
 ```
 
-It does NOT mean everything in the entire MySQL server.
-
-Imagine:
-
-```text
-MySQL Server
-│
-├── wordpress
-│   ├── wp_users
-│   └── wp_posts
-│
-├── school
-│   ├── students
-│   └── teachers
-│
-└── shop
-    ├── products
-    └── orders
-```
-
-This:
-
-```sql
-GRANT ALL PRIVILEGES
-ON wordpress.*
-TO 'wp_user'@'localhost';
-```
-
-gives:
-
-```text
-wp_user
-   │
-   ▼
-wordpress
-   ├── wp_users       allowed
-   └── wp_posts       allowed
-```
-
-but does not grant the same privileges on:
-
-```text
-school
-shop
-```
+is useful.
 
 ---
 
-# 16. Why not give WordPress MySQL root?
+# 9. Remote Root Login
 
-You don't want your application to normally use:
+You generally do not want MySQL root authentication available remotely.
 
-```text
-root
-```
-
-as its database account.
-
-Instead:
+The recommended configuration is:
 
 ```text
-WordPress
-    │
-    ▼
-wp_user
-    │
-    ▼
-wordpress.*
+'root'@'localhost'
 ```
 
-This follows the:
-
-> Principle of least privilege
-
-The application gets the permissions it needs without unnecessarily giving it administrative access to every database.
-
----
-
-# 17. `ALL PRIVILEGES` does not mean "everything"
-
-Compare:
-
-```sql
-GRANT ALL PRIVILEGES
-ON wordpress.*
-TO 'wp_user'@'localhost';
-```
-
-with:
-
-```sql
-GRANT ALL PRIVILEGES
-ON *.*
-TO 'wp_user'@'localhost';
-```
-
-The first:
+rather than:
 
 ```text
-wordpress.*
+'root'@'%'
 ```
 
-means:
+With:
 
 ```text
-everything inside wordpress
+'root'@'localhost'
 ```
 
-The second:
+root administration is restricted to the local server.
+
+Conceptually:
 
 ```text
-*.*
+Ubuntu Server
+      │
+      ▼
+'root'@'localhost'
+      │
+      ▼
+    MySQL
 ```
-
-means:
-
-```text
-all databases
-+
-all objects
-```
-
-So the scope is determined by what comes after `ON`.
-
----
-
-# 18. Examples of specific privileges
 
 Instead of:
 
-```sql
-GRANT ALL PRIVILEGES
-```
-
-you could grant individual privileges.
-
-For example:
-
-```sql
-GRANT SELECT
-ON wordpress.*
-TO 'wp_user'@'localhost';
-```
-
-would give read permission.
-
-Other common privileges include:
-
 ```text
-SELECT  → read data
-INSERT  → add data
-UPDATE  → modify data
-DELETE  → delete data
-CREATE  → create objects
-ALTER   → modify object structures
-DROP    → remove objects
+Remote computer
+      │
+      ▼
+'root'@'%'
+      │
+      ▼
+    MySQL
 ```
 
-For the WordPress setup in this exercise, the guide uses:
-
-```sql
-GRANT ALL PRIVILEGES
-ON wordpress.*
-TO 'wp_user'@'localhost';
-```
+The second arrangement unnecessarily exposes a highly privileged account to remote authentication attempts.
 
 ---
 
-# 19. `FLUSH PRIVILEGES`
+# 10. Check How Root Is Configured
 
-You executed:
-
-```sql
-FLUSH PRIVILEGES;
-```
-
-This tells MySQL to reload privilege information.
-
-With modern MySQL, commands such as:
-
-```sql
-CREATE USER
-GRANT
-```
-
-already update the privilege system directly.
-
-Therefore, after those commands, `FLUSH PRIVILEGES` is generally unnecessary.
-
-You may still encounter it in tutorials, especially older ones.
-
----
-
-# 20. Checking the root MySQL account
-
-You executed:
+Inside MySQL, run:
 
 ```sql
 SELECT host, user
@@ -846,11 +353,7 @@ FROM mysql.user
 WHERE user='root';
 ```
 
-This asks:
-
-> Show the host and username for MySQL accounts whose username is `root`.
-
-Your result was:
+You may see:
 
 ```text
 +-----------+------+
@@ -860,159 +363,394 @@ Your result was:
 +-----------+------+
 ```
 
-So you have:
+The important part is:
 
 ```text
-root@localhost
+localhost
 ```
 
-and the query did not show:
+You are checking that you don't have an unnecessary:
 
 ```text
-root@%
+%
+```
+
+entry for root.
+
+For example, this would indicate a root account associated with any host:
+
+```text
++------+------+
+| host | user |
++------+------+
+| %    | root |
++------+------+
 ```
 
 ---
 
-# 21. What `%` means
+# 11. Why Create a Separate WordPress User?
 
-In a MySQL account such as:
+Do **not** normally configure WordPress to use MySQL `root`.
+
+Instead, create a dedicated MySQL account:
 
 ```text
-'root'@'%'
+wp_user
 ```
 
-the `%` represents a wildcard for the host.
+The idea is **least privilege**.
 
-Conceptually:
-
-```text
-root@localhost
-      │
-      └── local host
-
-root@%
-      │
-      └── any host
-```
-
-The guide asks you to check that root doesn't have an any-host account such as:
+Instead of:
 
 ```text
-root@%
-```
-
-because remote root authentication increases the exposure of the administrative account.
-
----
-
-# 22. Your current setup
-
-Based on the commands you showed, you successfully created:
-
-```text
-wp_user@localhost
-```
-
-You also accidentally created:
-
-```text
-wodpress
-```
-
-instead of:
-
-```text
-wordpress
-```
-
-And you granted:
-
-```text
-wp_user@localhost
+WordPress
     │
     ▼
-ALL PRIVILEGES
+MySQL root
     │
     ▼
-wordpress.*
+Everything
 ```
 
-Your root check showed:
+use:
 
 ```text
-root@localhost
+WordPress
+    │
+    ▼
+wp_user
+    │
+    ▼
+wordpress database
 ```
 
-The intended final state should be:
-
-```text
-MySQL Server
-│
-├── root@localhost
-│
-└── wp_user@localhost
-       │
-       │ privileges
-       ▼
-   wordpress.*
-       │
-       ├── WordPress tables
-       ├── wp_users
-       ├── wp_posts
-       ├── wp_comments
-       └── ...
-```
+The WordPress application only needs access to its own database.
 
 ---
 
-# 23. Commands to finish/correct the setup
+# 12. Create the WordPress Database
 
-First check the databases:
-
-```sql
-SHOW DATABASES;
-```
-
-If you see the accidental:
-
-```text
-wodpress
-```
-
-you can remove it:
-
-```sql
-DROP DATABASE wodpress;
-```
-
-Then create the correctly named database:
+Inside MySQL:
 
 ```sql
 CREATE DATABASE wordpress;
 ```
 
-Then ensure the WordPress user has privileges:
+This creates a database named:
+
+```text
+wordpress
+```
+
+Conceptually:
+
+```text
+MySQL
+  │
+  └── wordpress
+```
+
+---
+
+# 13. Create the WordPress User
+
+Create the account:
 
 ```sql
-GRANT ALL PRIVILEGES
-ON wordpress.*
+CREATE USER 'wp_user'@'localhost'
+IDENTIFIED BY 'your_password';
+```
+
+This creates:
+
+```text
+username:
+    wp_user
+
+allowed host:
+    localhost
+
+password:
+    your_password
+```
+
+The important part is:
+
+```sql
+'wp_user'@'localhost'
+```
+
+which restricts the account to local connections.
+
+Use a strong password instead of the example password.
+
+---
+
+# 14. Grant Permissions
+
+Now give the WordPress user permissions on its database:
+
+```sql
+GRANT ALL PRIVILEGES ON wordpress.*
 TO 'wp_user'@'localhost';
 ```
 
-Check the privileges:
+The important part is:
 
-```sql
-SHOW GRANTS FOR 'wp_user'@'localhost';
+```text
+wordpress.*
 ```
 
-Check the database:
+Break it down:
 
-```sql
-SHOW DATABASES;
+```text
+wordpress.*
+│         │
+│         └── all objects/tables in the database
+│
+└──────────── database
 ```
 
-Check the root account:
+So this means:
+
+> Give `wp_user` all privileges on objects within the `wordpress` database.
+
+It does **not** mean:
+
+> Give `wp_user` unrestricted control over every database on the MySQL server.
+
+---
+
+# 15. Apply the Privilege Changes
+
+Run:
+
+```sql
+FLUSH PRIVILEGES;
+```
+
+This tells MySQL to reload its privilege information.
+
+Then the account and permissions are ready to use.
+
+---
+
+# 16. Complete WordPress Database Setup
+
+The complete sequence is:
+
+```sql
+CREATE DATABASE wordpress;
+
+CREATE USER 'wp_user'@'localhost'
+IDENTIFIED BY 'your_password';
+
+GRANT ALL PRIVILEGES ON wordpress.*
+TO 'wp_user'@'localhost';
+
+FLUSH PRIVILEGES;
+```
+
+You can then verify the user:
+
+```sql
+SELECT user, host
+FROM mysql.user
+WHERE user='wp_user';
+```
+
+Expected result:
+
+```text
+wp_user | localhost
+```
+
+---
+
+# 17. The Security Model
+
+Your setup should look approximately like this:
+
+```text
+                     Ubuntu Server
+              ┌────────────────────────┐
+              │                        │
+              │       WordPress        │
+              │           │            │
+              │           │            │
+              │           ▼            │
+              │     127.0.0.1:3306     │
+              │           │            │
+              │           ▼            │
+              │         MySQL          │
+              │                        │
+              │     ┌────────────┐     │
+              │     │ wordpress  │     │
+              │     │ database   │     │
+              │     └─────▲──────┘     │
+              │           │            │
+              │        wp_user         │
+              │      @localhost        │
+              │                        │
+              └────────────────────────┘
+```
+
+External machines:
+
+```text
+Other computer
+      │
+      │
+      X
+      │
+ MySQL :3306
+```
+
+because MySQL is configured to listen only on:
+
+```text
+127.0.0.1
+```
+
+---
+
+# 18. Multiple Layers of Protection
+
+Your configuration provides several separate protections.
+
+## Layer 1 — Network binding
+
+```ini
+bind-address = 127.0.0.1
+```
+
+MySQL isn't listening for normal network connections on the server's external IP.
+
+---
+
+## Layer 2 — Root restriction
+
+```text
+'root'@'localhost'
+```
+
+Root is not intended to be remotely authenticated.
+
+---
+
+## Layer 3 — Dedicated application account
+
+```text
+'wp_user'@'localhost'
+```
+
+WordPress doesn't need to use root.
+
+---
+
+## Layer 4 — Database-level permissions
+
+```sql
+GRANT ALL PRIVILEGES ON wordpress.*
+TO 'wp_user'@'localhost';
+```
+
+The application account's permissions are scoped to the WordPress database.
+
+---
+
+# 19. Why Not Give WordPress Root?
+
+Imagine MySQL contains:
+
+```text
+MySQL
+├── wordpress
+├── another_database
+├── mysql
+├── sys
+└── other databases
+```
+
+If WordPress uses:
+
+```text
+root
+```
+
+then a compromise of WordPress could potentially give an attacker access to MySQL administrative capabilities.
+
+Instead:
+
+```text
+WordPress
+    │
+    ▼
+wp_user
+    │
+    ▼
+wordpress.*
+```
+
+The application is given only the database it needs.
+
+This follows the security principle:
+
+> **Least privilege:** give a program only the permissions it actually needs.
+
+---
+
+# 20. Useful Verification Commands
+
+## Check MySQL service
+
+From the Linux shell:
+
+```bash
+sudo systemctl status mysql
+```
+
+---
+
+## Check MySQL listening ports
+
+```bash
+sudo ss -lntp | grep 3306
+```
+
+If MySQL is bound to localhost, you should see something similar to:
+
+```text
+127.0.0.1:3306
+```
+
+rather than:
+
+```text
+0.0.0.0:3306
+```
+
+or:
+
+```text
+*:3306
+```
+
+---
+
+## Check MySQL users
+
+Inside MySQL:
+
+```sql
+SELECT user, host
+FROM mysql.user;
+```
+
+---
+
+## Check root specifically
 
 ```sql
 SELECT host, user
@@ -1022,88 +760,150 @@ WHERE user='root';
 
 ---
 
-# 24. The complete mental model
+## Check the WordPress user
 
-The most important thing is to understand that there are several different layers.
-
-```text
-Ubuntu Server
-│
-│
-├── Linux users
-│      ├── root
-│      ├── server
-│      ├── luffy
-│      └── zoro
-│
-│
-└── MySQL Server
-       │
-       ├── MySQL accounts
-       │      ├── root@localhost
-       │      └── wp_user@localhost
-       │
-       └── Databases
-              ├── wordpress
-              │      ├── tables
-              │      ├── rows
-              │      └── ...
-              │
-              └── other databases
+```sql
+SELECT host, user
+FROM mysql.user
+WHERE user='wp_user';
 ```
 
-And the WordPress relationship is:
+---
+
+# 21. The Most Important Concepts
+
+Remember these four ideas:
+
+### 1. `127.0.0.1`
+
+Means:
 
 ```text
-WordPress
-    │
-    │ uses credentials
-    ▼
-wp_user@localhost
-    │
-    │ has privileges
-    ▼
-wordpress.*
-    │
-    ▼
-WordPress data
+This machine itself
 ```
 
-Meanwhile, the network configuration determines whether MySQL can be reached from outside:
+---
 
-```text
-bind-address = 127.0.0.1
-                 │
-                 ▼
-          MySQL listens locally
-```
+### 2. `localhost`
 
-So there are **two different security concepts**:
-
-### Network access
-
-```text
-bind-address = 127.0.0.1
-```
-
-Controls:
-
-> Where can the MySQL server listen for network connections?
-
-### Database authorization
+In a MySQL account:
 
 ```sql
 'wp_user'@'localhost'
 ```
 
-and:
+means:
+
+```text
+wp_user can authenticate from the local host.
+```
+
+---
+
+### 3. `%`
+
+Means:
+
+```text
+Any host
+```
+
+So:
+
+```sql
+'root'@'%'
+```
+
+represents a root account associated with any host.
+
+---
+
+### 4. `wordpress.*`
+
+Means:
+
+```text
+All objects/tables inside the wordpress database
+```
+
+So:
 
 ```sql
 GRANT ALL PRIVILEGES ON wordpress.*
+TO 'wp_user'@'localhost';
 ```
 
-Control:
+means:
 
-> Which MySQL account can connect, from where, and what can that account do?
+```text
+wp_user
+   │
+   └── localhost only
+          │
+          └── all privileges
+                  │
+                  └── wordpress database only
+```
 
-These are related, but they are not the same thing.
+---
+
+# 22. Recommended Final Configuration
+
+For your Ubuntu server, the intended configuration is:
+
+```ini
+# /etc/mysql/mysql.conf.d/mysqld.cnf
+
+bind-address = 127.0.0.1
+```
+
+And in MySQL:
+
+```sql
+CREATE DATABASE wordpress;
+
+CREATE USER 'wp_user'@'localhost'
+IDENTIFIED BY 'STRONG_PASSWORD';
+
+GRANT ALL PRIVILEGES ON wordpress.*
+TO 'wp_user'@'localhost';
+
+FLUSH PRIVILEGES;
+```
+
+Then verify:
+
+```sql
+SELECT host, user
+FROM mysql.user
+WHERE user='root';
+```
+
+and:
+
+```sql
+SELECT host, user
+FROM mysql.user
+WHERE user='wp_user';
+```
+
+The basic architecture is:
+
+```text
+                    SERVER
+                       │
+              ┌────────┴────────┐
+              │                 │
+          WordPress          MySQL
+              │                 │
+              └──── localhost ──┘
+                                │
+                         wp_user@localhost
+                                │
+                                ▼
+                         wordpress.*
+```
+
+The overall goal is simple:
+
+> **MySQL is local, root is local, and WordPress gets its own dedicated account with access to its own database.**
